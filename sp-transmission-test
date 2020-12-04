@@ -1,0 +1,164 @@
+#!/bin/bash
+
+###############################################################################
+#
+# Description:
+#
+#	A simple script to send a test email through SparkPost by way of their REST 
+#	API. Be sure that cURL is available and supports TLS 1.2 or higher, and
+#	that jq is installed.
+#
+###############################################################################
+
+###############################################################################
+#
+# Configuration Options
+#
+###############################################################################
+
+# Notify options
+notify_recpt="recipient@domain.tld" # Recipient Address
+notify_rname="Test Recipient"		# Recipient Name
+notify_fname="Test Sender"			# Sender Friendly From
+notify_b_dmn="bounce.domain.tld"	# Sender Bounce Domain
+notify_f_dmn="sending.domain.tld"	# Sender Sending Domain
+notify_xmail="An Email Client"		# Sender X-Mailer
+
+# SparkPost Config
+# https://developers.sparkpost.com/api/transmissions/
+sp_api_endpoint="https://api.sparkpost.com"
+sp_api_auth_key="{{API_KEY}}"	# API Key
+sp_api_n_r_errs="3"				# Recipient Errors
+sp_campaign_nme="{{CAMPAIGN}}"  # Campaign Name
+sp_event_t_open="true"  		# Open Tracking
+sp_event_t_clck="true"  		# Click Tracking
+sp_sandbox_test="false" 		# Sandbox Test
+sp_skip_supress="false" 		# Skip Suppression
+sp_transactionl="false" 		# Transactional
+
+###############################################################################
+#
+# No user-configurable options exist below this line.
+#
+###############################################################################
+
+sp_send_notification()
+{
+	# Build X-MSYS-API JSON
+
+		# Set X-MSYS-API Parameters
+		campaign_id="${sp_campaign_nme}"
+		open_tracking="${sp_event_t_open}"
+		click_tracking="${sp_event_t_clck}"
+		sandbox="${sp_sandbox_test}"
+		skip_suppression="${sp_skip_supress}"
+		transactional="${sp_transactionl}"
+
+
+	# Build JSON
+
+		read -r -d '' body_text << EOM
+Hello there,
+
+This is a test.
+
+You're reading the TEXT component.
+
+Thank you for participating.
+EOM
+
+		read -r -d '' body_html << EOM
+<html>
+<head>
+</head>
+<body>
+Hello there,<br>
+<br>
+This is a test.<br>
+<br>
+You're reading the HTML component.<br>
+<br>
+Thank you for participating.
+</body>
+</html>
+EOM
+
+json_body_text=$(echo "$body_text" | jq -R -s)
+json_body_html=$(echo "$body_html" | jq -R -s)
+
+		read -r -d '' json << EOM 
+{
+    "options": {
+        "open_tracking": $open_tracking,
+        "click_tracking": $click_tracking,
+        "sandbox": $sandbox,
+        "skip_supression": $skip_suppression,
+        "transactional": $transactional
+    },
+    "campaign_id": "$campaign_id",
+    "metadata": {
+	"hostname": "$(echo $(hostname -f))"
+    },
+    "recipients": [
+        {
+            "address":{
+                	"email":"${notify_recpt}",
+                	"name":"${notify_rname}"
+                },
+                "metadata": {
+                    "place": "Parts Unknown"
+                }
+        }
+    ],
+    "return_path": "$(hostname -s)@${notify_b_dmn}",
+    "content":{
+        "from": {
+            "name": "${notify_fname}",
+            "email": "$(hostname -s)@${notify_f_dmn}"
+        },
+	"headers": {
+		"X-Mailer": "${notify_xmail}"
+        },
+        "subject": "SparkPost REST Test",
+	"text": $json_body_text,
+	"html": $json_body_html
+   }
+}
+EOM
+
+###################################################################################
+#
+# Create a Transmission (inline text/html and recipients)
+#
+# Note: Sending limits apply to SparkPost accounts only. When a transmission is
+# created, the number of messages in the transmission is compared to the sending
+# limit of your account. If the transmission will cause you to exceed your sending
+# limit, the entire transmission results in an error and no messages are sent. Note
+# that no messages will be sent for the given transmission, regardless of the
+# number of messages that caused you to exceed your sending limit. In this case,
+# the Transmission API will return an HTTP 420 error code with an error detailing
+# whether you would exceed your hourly, daily, or sandbox sending limit.
+###################################################################################
+
+echo ""
+echo "$json" | jq
+echo
+
+# Create a temp file to store the response.
+tempfile=$(mktemp)
+
+# Issue the POST using cURL
+curl --verbose --include --request POST \
+  ${sp_api_endpoint}/api/v1/transmissions?num_rcpt_errors=${sp_api_n_r_errs} \
+  --header "Accept: application/json" \
+  --header "Authorization: ${sp_api_auth_key}" \
+  --header "Content-Type: application/json" \
+  --header "cache-control: no-cache" \
+  --data "$json" \
+  --output "$tempfile"
+
+cat $tempfile | tail -n1 | jq
+
+}
+
+echo "$(sp_send_notification)"
